@@ -1,0 +1,17 @@
+{
+  "name": "pro-rag-studio",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "dev": "python -m uvicorn server.app:create_app --factory --reload --host 127.0.0.1 --port 8787",
+    "start": "python -m server.main",
+    "test": "python -m pytest",
+    "seed": "python -m scripts.seed_demo",
+    "web:dev": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build"
+  }
+}

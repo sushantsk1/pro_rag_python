@@ -72,6 +72,18 @@ npm.cmd --prefix web run build
 
 See [testing](docs/TESTING.md), [architecture](docs/ARCHITECTURE.md), and the [beginner's guide](docs/BEGINNERS_GUIDE.md).
 
+See the [measured retrieval evaluation report](docs/EVALUATION_REPORT.md) for keyword versus hybrid
+results on a labeled synthetic corpus, including passage relevance, latency, and limitations. Reproduce
+it without starting the API or calling NVIDIA:
+
+~~~powershell
+.\.venv\Scripts\python.exe -m scripts.evaluate_retrieval --repeats 5 --top-k 6
+~~~
+
+This uses real MiniLM embeddings from the local cache. Add `--allow-model-download` on a new machine
+to permit the initial model download. It uses an isolated temporary database and leaves existing
+collections untouched. ChromaDB and live answer quality are not measured by this report.
+
 For the exact validated dependency versions, install requirements.lock.txt before the editable project:
 
 ~~~powershell

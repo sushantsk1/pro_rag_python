@@ -26,6 +26,29 @@ Remove-Item Env:RAG_TEST_REAL_EMBEDDINGS
 
 This downloads/caches actual MiniLM weights on first use, checks normalized 384-dimensional vectors, ingests synthetic text, and verifies semantic scores through LangChain/FAISS. No NVIDIA request is made.
 
+## Reproducible retrieval report
+
+~~~powershell
+.\.venv\Scripts\python.exe -m scripts.evaluate_retrieval --repeats 5 --top-k 6
+~~~
+
+This runs the existing BM25 baseline and BM25 + FAISS hybrid pipeline on the same 16 synthetic
+Markdown documents and 42 labeled questions, using real normalized MiniLM embeddings. It reports
+document hit rate, document/passage recall, reciprocal rank, filter violations, the pre-generation
+confidence threshold's decisions, and warm median/p95 retrieval latency. This is not a live-answer
+or ChromaDB benchmark.
+
+The script defaults to offline model loading; add `--allow-model-download` to permit the initial
+Hugging Face download. It never substitutes stub embeddings, loads no `.env`, calls no NVIDIA
+endpoint, and uses a temporary SQLite database separate from user collections. No running API or
+frontend is required.
+
+It replaces [the report](EVALUATION_REPORT.md) and [raw results](evaluation/results.json). Inspect
+[the corpus and relevance labels](evaluation/dataset.json) alongside the results. Timing samples,
+retrieved snippets, model revision, package versions, dataset/chunk fingerprints, and source hashes
+are included for auditing. The dataset is a development set authored with its questions; the report
+does not establish performance on independent or real-world data.
+
 ## Dashboard
 
 Start python -m server.main and the React Vite server, then python -m scripts.seed_demo. Inspect Knowledge library, chunks, retrieval-only hybrid results, filters, trace, history, and both evaluation modes. Enable Generate answer only when you want excerpts sent to NVIDIA.

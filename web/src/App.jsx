@@ -5,14 +5,16 @@ import {
   FileText, FlaskConical, FolderOpen, HelpCircle, Layers3,
   LoaderCircle, Menu, MessageCircle, MoreHorizontal, Plus, RefreshCw, Search,
   Send, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, UploadCloud,
-  X, ArrowUpRight,
+  X, ArrowUpRight, Workflow,
 } from 'lucide-react';
 import { api, queryString } from './api.js';
+import Playground from './Playground.jsx';
 
 const NAV = [
   { id: 'overview', label: 'Overview', icon: BarChart3 },
   { id: 'library', label: 'Knowledge library', icon: FolderOpen },
   { id: 'ask', label: 'Ask documents', icon: MessageCircle },
+  { id: 'playground', label: 'RAG Playground', icon: Workflow },
   { id: 'evaluate', label: 'Evaluate', icon: FlaskConical },
   { id: 'settings', label: 'Settings', icon: Settings2 }
 ];
@@ -20,6 +22,7 @@ const PAGE = {
   overview: ['Overview', 'Your knowledge, in one place.'],
   library: ['Knowledge library', 'Keep your sources together.'],
   ask: ['Ask documents', 'A question, an answer, and the sources behind it.'],
+  playground: ['RAG Playground', 'Build, inspect, and compare retrieval pipelines.'],
   evaluate: ['Evaluate', 'Compare how well each search finds the right evidence.'],
   settings: ['Settings', 'Your connections and preferences.']
 };
@@ -79,7 +82,7 @@ function SectionHeading({ title, subtitle, action }) {
 }
 
 export default function App() {
-  const [page, setPage] = useState('overview');
+  const [page, setPage] = useState(() => NAV.some(item => item.id === window.location.hash.slice(1)) ? window.location.hash.slice(1) : 'overview');
   const [mobileOpen, setMobileOpen] = useState(false);
   const [compactLayout, setCompactLayout] = useState(() => window.matchMedia('(max-width: 760px)').matches);
   const navigationRef = useRef(null);
@@ -185,7 +188,7 @@ export default function App() {
     return () => clearInterval(timer);
   }, [collectionId, documents, loadCollection, showError]);
 
-  function navigate(next) { setPage(next); setMobileOpen(false); setNotice(null); window.scrollTo(0, 0); }
+  function navigate(next) { setPage(next); setMobileOpen(false); setNotice(null); window.history.replaceState(null, '', '#' + next); window.scrollTo(0, 0); }
   function chooseCollection(id) {
     setCollectionId(id);
     if (id) localStorage.setItem('pro-rag-collection', id);
@@ -207,12 +210,13 @@ export default function App() {
     <div className="main-shell" inert={compactLayout && mobileOpen}>
       <header className="topbar"><div className="topbar-left"><IconButton icon={Menu} label="Open menu" className="icon-button mobile-menu" aria-expanded={mobileOpen} aria-controls="workspace-navigation" onClick={() => setMobileOpen(true)} /><span className="breadcrumb">My workspace</span><span className="breadcrumb-divider">/</span><strong>{NAV[pageIndex].label}</strong></div><div className="topbar-right"><span className="privacy-chip"><ShieldCheck size={14} /> Local & personal</span><span className="topbar-divider" /><IconButton icon={RefreshCw} label="Refresh data" className={refreshing ? 'refreshing' : ''} onClick={refresh} disabled={refreshing} /></div></header>
       <main id="main-content" className={`content page-${page}`} tabIndex={-1}>
-        <div className="page-header"><div><h1>{PAGE[page][0]}</h1><p>{PAGE[page][1]}</p></div><div className="page-header-right">{collections.length > 0 && <label className="workspace-picker"><div><span className="collection-picker-icon"><FolderOpen size={17} /></span><select aria-label="Active collection" value={collectionId} onChange={event => chooseCollection(event.target.value)}><option value="">Choose a collection</option>{collections.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={14} /></div></label>}</div></div>
+        <div className="page-header"><div><h1>{PAGE[page][0]}</h1><p>{PAGE[page][1]}</p></div><div className="page-header-right">{page === 'playground' ? <div id="playground-actions" /> : collections.length > 0 && <label className="workspace-picker"><div><span className="collection-picker-icon"><FolderOpen size={17} /></span><select aria-label="Active collection" value={collectionId} onChange={event => chooseCollection(event.target.value)}><option value="">Choose a collection</option>{collections.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><ChevronDown size={14} /></div></label>}</div></div>
         <Notice value={notice} onClose={() => setNotice(null)} />
         {booting ? <div className="loading-page"><LoaderCircle className="spin" size={28} /> Connecting to local workspace…</div> :
           page === 'overview' ? <Overview queries={queries} navigate={navigate} collection={activeCollection} /> :
           page === 'library' ? <Library collections={collections} collectionId={collectionId} chooseCollection={chooseCollection} documents={documents} refresh={refresh} loadCollection={loadCollection} showError={showError} showSuccess={showSuccess} /> :
           page === 'ask' ? <Ask collectionId={collectionId} collections={collections} chooseCollection={chooseCollection} documents={documents} queries={queries} config={config} refresh={refresh} showError={showError} showSuccess={showSuccess} /> :
+          page === 'playground' ? <Playground collectionId={collectionId} documents={documents} collections={collections} chooseCollection={chooseCollection} config={config} navigate={navigate} /> :
           page === 'evaluate' ? <Evaluate collectionId={collectionId} documents={documents} cases={cases} runs={runs} refresh={refresh} showError={showError} showSuccess={showSuccess} /> :
           <Settings config={config} health={health} />}
       </main>

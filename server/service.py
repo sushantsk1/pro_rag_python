@@ -9,6 +9,7 @@ from uuid import uuid4
 from .embedding import LocalEmbedder
 from .errors import RagError
 from .parser import SUPPORTED_FORMATS, parse_isolated
+from .playground import Playground
 from .provider import AnswerGenerator, abstain
 from .retrieval import RetrievalEngine
 from .store import LocalStore, timestamp
@@ -31,6 +32,7 @@ class RagService:
         self.generator = generator or AnswerGenerator(config)
         self.engine = RetrievalEngine(self.store, self.embedder)
         self.lock = threading.RLock()
+        self.playground = Playground(self)
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rag-ingest")
         self.jobs = []
         self.ocr_status = "untested"

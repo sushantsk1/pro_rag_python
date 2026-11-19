@@ -21,6 +21,13 @@ SYSTEM = (
 )
 
 
+def source_context(sources: list[dict]) -> str:
+    return "\n\n".join(
+        f"[S{i + 1}] {source['documentName']} | {json.dumps(source['location'])}\n{source['snippet']}"
+        for i, source in enumerate(sources)
+    )
+
+
 def abstain(answer="The selected documents do not contain enough evidence to answer.") -> dict:
     return {"answer": answer, "citations": [], "answerStatus": "abstained"}
 
@@ -55,7 +62,7 @@ def conflicting_evidence(question: str, sources: list[dict]) -> dict | None:
     return None
 
 
-def parse_reply(raw: str, sources: list[dict]) -> dict:
+def parse_reply(raw: str, sources: list[dict], trace: dict | None = None) -> dict:
     answer, requested = raw.strip(), []
     try:
         cleaned = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", answer, flags=re.I)
@@ -66,6 +73,8 @@ def parse_reply(raw: str, sources: list[dict]) -> dict:
                 list(map(str, parsed["citations"])) if isinstance(parsed.get("citations"), list) else []
             )
             if parsed.get("abstain") is True:
+                if trace is not None:
+                    trace["decision"] = "model_abstained"
                 return abstain(answer or "The documents do not provide enough evidence to answer.")
     except (ValueError, TypeError):
         pass
@@ -74,9 +83,13 @@ def parse_reply(raw: str, sources: list[dict]) -> dict:
     cited = list(dict.fromkeys(requested))
     claim_text = "".join(char for char in MARKER.sub("", answer) if char.isalnum())
     if not claim_text or not cited or any(marker not in valid for marker in cited):
+        if trace is not None:
+            trace["decision"] = "citation_validation_failed"
         return abstain("The available evidence is not enough for a safely cited answer.")
     if not MARKER.search(answer):
         answer += f" [{cited[0]}]"
+    if trace is not None:
+        trace["decision"] = "answered"
     return {
         "answer": answer,
         "answerStatus": "answered",
@@ -105,31 +118,41 @@ class AnswerGenerator:
             usage_telemetry_enabled=False,
         )
 
-    def generate(self, question: str, sources: list[dict], *, fixture=False) -> dict:
+    def generate(self, question: str, sources: list[dict], *, fixture=False, trace=None) -> dict:
+        trace = trace if trace is not None else {}
+        trace.update(providerRequestAttempted=False, providerResponseReceived=False, decision="not_started")
         if not sources:
+            trace["decision"] = "no_evidence"
             return abstain()
         conflict = conflicting_evidence(question, sources)
         if conflict:
+            trace["decision"] = "conflicting_evidence"
             return conflict
         if fixture or self.config.model_mode == "stub":
+            trace["fixture"] = True
             snippet = re.sub(r"\s+", " ", sources[0]["snippet"]).strip()[:240]
             return parse_reply(
-                json.dumps({"answer": f"The source states: {snippet} [S1]", "citations": ["S1"]}), sources
+                json.dumps({"answer": f"The source states: {snippet} [S1]", "citations": ["S1"]}),
+                sources,
+                trace,
             )
         if not self.config.nvidia_api_key:
+            trace["decision"] = "missing_credentials"
             raise RagError(
                 503,
                 "NVIDIA_NOT_CONFIGURED",
                 "Add your NVIDIA API key to .env to generate answers. Retrieval still works.",
             )
-        context = "\n\n".join(
-            f"[S{i + 1}] {source['documentName']} | {json.dumps(source['location'])}\n{source['snippet']}"
-            for i, source in enumerate(sources)
-        )
+        context = source_context(sources)
         prompt = ChatPromptTemplate.from_messages(
             [("system", SYSTEM), ("human", "Question: {question}\n\nEvidence:\n{context}")]
         )
         try:
+
+            def parse_model_reply(raw):
+                trace["providerResponseReceived"] = True
+                return parse_reply(raw, sources, trace)
+
             model = self._model()
             generation_options = {
                 "thinking_mode": self.config.nvidia_enable_thinking,
@@ -141,8 +164,9 @@ class AnswerGenerator:
                 prompt
                 | model.bind(**generation_options)
                 | StrOutputParser()
-                | RunnableLambda(lambda raw: parse_reply(raw, sources))
+                | RunnableLambda(parse_model_reply)
             )
+            trace["providerRequestAttempted"] = True
             return chain.invoke({"question": question, "context": context})
         except RagError:
             raise

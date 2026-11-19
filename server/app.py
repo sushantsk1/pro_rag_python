@@ -5,12 +5,14 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 
 from .config import load_config
 from .errors import RagError
+from .playground import PlaygroundRequest
+from .playground_stream import stream_experiment
 from .service import RagService
 from .store import timestamp
 
@@ -166,11 +168,23 @@ def create_app(config=None, **options):
 
     @app.get(PREFIX + "/health")
     def health():
-        return {"status": "ok", "version": "1", "time": timestamp(), "indexStatus": "ready"}
+        return {"status": "ok", "version": "1", "time": timestamp(), "indexStatus": "ready", "playgroundVersion": 2}
 
     @app.get(PREFIX + "/config/status")
     def config_status():
         return service.config_status()
+
+    @app.post(PREFIX + "/playground/run")
+    async def playground_run(request: PlaygroundRequest):
+        return await run_in_threadpool(service.playground.run, request)
+
+    @app.post(PREFIX + "/playground/stream")
+    async def playground_stream(request: PlaygroundRequest):
+        return StreamingResponse(
+            stream_experiment(service.playground, request),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
 
     @app.get(PREFIX + "/collections")
     def collections(limit: str = "20", cursor: str | None = None):

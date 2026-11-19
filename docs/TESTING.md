@@ -10,11 +10,35 @@ Run commands from the repository root. Activate the virtual environment or use i
 .\.venv\Scripts\python.exe -m ruff check server scripts tests/python
 .\.venv\Scripts\python.exe -m compileall -q server scripts
 npm.cmd --prefix web run build
+node --test tests/web/playground-stream.test.mjs
 ~~~
 
 The default suite makes no hosted NVIDIA calls or model downloads. It covers the original API contract, a real Uvicorn subprocess, eight file formats, source locations, overlap, bad/duplicate uploads, filters, citations, abstention/conflicts, retries, embedding outage/recovery, evaluation fingerprints, deletion, demo seeding, and legacy SQLite across restarts.
 
 FAISS/BM25 run with deterministic fixture embeddings. Provider tests execute the actual LangChain ChatNVIDIA chain against a localhost fake server, including 401/403/429/500 and timeout behavior.
+
+The playground tests cover all four chunking strategies across three retrieval
+modes and two embedding options, partial execution, vector normalization, source
+offsets, parent context expansion, ranking order, prompt consistency, library
+isolation, input limits, concurrent-run rejection, and generation failures. Local
+model tests use explicit fixture vectors; TF–IDF, FAISS, and BM25 execute normally.
+
+Projection tests compare the PCA geometry and explained variance against NumPy SVD,
+check cosine scores against the full input vectors, ensure question changes leave
+chunk coordinates unchanged, and cover one-point, identical-vector, rank-deficient,
+and out-of-vocabulary cases. They also check the API links map points to indexed
+chunk vectors and respects partial execution.
+
+Streaming tests verify ordered stage events, early delivery while a real HTTP run's
+embedding call is blocked, default generation, partial runs, provider errors,
+disconnect checks, and retryable busy errors. Browser-reader tests cover fragmented
+UTF-8/NDJSON, interrupted streams, server failures, and outdated backend messages.
+
+A candidate-name regression runs the actual NVIDIA LangChain chain against the
+localhost fake provider with a real normalized semantic hit, no literal query
+overlap, and a low heuristic score. It checks that the provider receives the exact
+prepared prompt and returns a cited name. Further tests distinguish no model call,
+model abstention, and citation validation failures in the execution trace.
 
 ## Real MiniLM and FAISS
 
@@ -52,6 +76,27 @@ does not establish performance on independent or real-world data.
 ## Dashboard
 
 Start python -m server.main and the React Vite server, then python -m scripts.seed_demo. Inspect Knowledge library, chunks, retrieval-only hybrid results, filters, trace, history, and both evaluation modes. Enable Generate answer only when you want excerpts sent to NVIDIA.
+
+Open **RAG Playground** from the same sidebar. Verify changing chunk size changes
+the real output after rerunning; try parent–child and semantic grouping, inspect
+MiniLM/TF–IDF vectors and retrieval channels, and compare selected context. Verify
+that full runs include generation without a checkbox, earlier-stage runs remain
+local, old outputs are
+marked after settings change, and the existing library remains unchanged. Test
+algorithm selection by click and drag, completed-run playback, JSON export, and
+desktop/tablet/mobile layouts. See [the feature guide](PLAYGROUND.md).
+
+In the embedding map, verify point selection, full-vector cosine scores, retrieved
+candidate highlights, 2D pan/zoom, 3D pointer and keyboard rotation, camera reset,
+and complete chunk inspection. Pause flow and change playback speed; reduced-motion
+preferences should disable moving packets. Inspect the tabbed panel and its close/
+reopen behavior, and confirm exports include real projection coordinates. The
+redesign was checked in local Chrome at 1920, 1366, 1024, 768, and 390 pixels using
+cached real MiniLM embeddings and TF–IDF, without a hosted generation request.
+Progress behavior was also checked with controlled embedding/provider delays:
+only Embed runs, elapsed time advances, future stages cannot be selected, and the
+map appears before generation finishes. The QA provider was explicitly a fixture;
+the normal dashboard continues to use its configured NVIDIA provider.
 
 ## Optional live NVIDIA test
 

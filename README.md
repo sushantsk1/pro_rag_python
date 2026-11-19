@@ -46,6 +46,33 @@ npm.cmd run dev
 
 Open <http://127.0.0.1:5173>. API documentation: <http://127.0.0.1:8787/docs>.
 
+## RAG Playground
+
+Open **RAG Playground** in the dashboard sidebar, or go directly to
+<http://127.0.0.1:5173/#playground>. It is a feature of the existing application and
+uses the same frontend, backend, and active collection.
+
+Choose the sample documents, paste text, or select a ready library document. Click
+each pipeline card to inspect its input and output. Select or drag algorithms onto
+their matching stages, then run the pipeline or run through just the selected stage.
+Try fixed, recursive, parent–child, and semantic chunking; MiniLM or TF–IDF vectors;
+BM25, vector, and hybrid retrieval; and optional heuristic reranking. Pin a run to
+compare evidence after changing a setting, or export its intermediate data as JSON.
+
+The compact workflow uses the dashboard's existing ivory/lavender theme, subtle
+layering, and pausable data-flow playback. Embed and Retrieve include an interactive
+PCA embedding map with 2D pan/zoom, 3D rotation, chunk inspection, and actual
+full-vector cosine scores. Settings, inputs, results, and raw data are available
+on demand in one inspector.
+
+Experiments do not replace library chunks or indexes. Full playground runs generate
+answers with NVIDIA automatically; earlier-stage runs need no NVIDIA key. Live
+stage flags show waiting, running, done, or failed, with elapsed and measured times.
+The embedding map appears as soon as Embed finishes, while later stages continue.
+MiniLM and semantic
+chunking use the configured local embedding model, which needs an initial download
+on a new machine. See [the playground guide](docs/PLAYGROUND.md) for behavior and limits.
+
 On Linux/macOS use .venv/bin/python and npm. Alternatively activate the virtual environment and use python; root npm start, npm test, and npm run seed delegate to Python.
 
 For backend auto-reload:

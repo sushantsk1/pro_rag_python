@@ -8,7 +8,7 @@ from conftest import upload
 from fastapi.testclient import TestClient
 
 from server.app import create_app
-from server.provider import conflicting_evidence, parse_reply
+from server.provider import AnswerGenerator, conflicting_evidence, parse_reply
 
 SOURCES = [
     {
@@ -37,6 +37,15 @@ def test_plain_text_and_json_citations():
         assert result["answerStatus"] == "answered"
         assert result["citations"] == [{"marker": "S1", "chunkId": "a"}]
         assert "[S1]" in result["answer"]
+
+
+def test_no_evidence_trace_does_not_claim_a_model_request(config):
+    trace = {}
+    result = AnswerGenerator(config).generate("What is the candidate name?", [], trace=trace)
+    assert result["answerStatus"] == "abstained"
+    assert trace["decision"] == "no_evidence"
+    assert trace["providerRequestAttempted"] is False
+    assert trace["providerResponseReceived"] is False
 
 
 def test_conflicting_hyphenated_claims():
@@ -103,6 +112,66 @@ def fake_nvidia():
         server.shutdown()
         server.server_close()
         worker.join()
+
+
+def test_playground_entity_question_reaches_provider_despite_low_ranking_score(config, fake_nvidia):
+    base, state = fake_nvidia
+    config.model_mode = "nvidia"
+    config.nvidia_api_key = "local-dummy-secret"
+    config.nvidia_base_url = base
+    config.nvidia_model = "local-fault-model"
+    state["content"] = '{"answer":"The candidate is Priya Shah [S1].","citations":["S1"],"abstain":false}'
+    app = create_app(config)
+    # A real normalized semantic hit with no literal query-token overlap.
+    app.state.service.embedder.embed_documents = lambda texts: [[1.0, 0.0] for _ in texts]
+    app.state.service.embedder.embed_query = lambda text: [0.2, (1 - 0.2**2) ** 0.5]
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/playground/run",
+            json={
+                "source": "text",
+                "text": "Priya Shah\nSoftware engineer working with Python and SQL.",
+                "question": "What is the candidate name?",
+                "retrieval": "semantic",
+            },
+        )
+        assert response.status_code == 200
+        output = response.json()["stages"][5]["output"]
+        assert output["retrievalScore"] == pytest.approx(0.06)
+        assert output["answerStatus"] == "answered"
+        assert "Priya Shah" in output["answer"]
+        assert output["citations"][0]["marker"] == "S1"
+        assert output["execution"]["providerRequestAttempted"] is True
+        assert output["execution"]["providerResponseReceived"] is True
+        assert output["execution"]["decision"] == "answered"
+        sent = state["requests"][-1][1]["messages"]
+        assert sent[0]["content"] == output["systemPrompt"]
+        assert sent[1]["content"] == output["userPrompt"]
+        assert "Priya Shah" in sent[1]["content"]
+
+
+@pytest.mark.parametrize(
+    "reply,decision",
+    [
+        ('{"answer":"Evidence is insufficient.","citations":[],"abstain":true}', "model_abstained"),
+        ('{"answer":"A claim [S99]","citations":["S99"],"abstain":false}', "citation_validation_failed"),
+    ],
+)
+def test_playground_distinguishes_model_abstention_from_citation_rejection(
+    config, fake_nvidia, reply, decision
+):
+    base, state = fake_nvidia
+    config.model_mode = "nvidia"
+    config.nvidia_api_key = "local-dummy-secret"
+    config.nvidia_base_url = base
+    config.nvidia_model = "local-fault-model"
+    state["content"] = reply
+    with TestClient(create_app(config)) as client:
+        run = client.post("/api/v1/playground/run", json={"embedding": "tfidf"}).json()
+        output = run["stages"][5]["output"]
+        assert output["answerStatus"] == "abstained"
+        assert output["execution"]["providerResponseReceived"] is True
+        assert output["execution"]["decision"] == decision
 
 
 def test_actual_langchain_nvidia_chain_and_faults(config, fake_nvidia):

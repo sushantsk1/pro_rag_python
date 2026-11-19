@@ -1,0 +1,142 @@
+# RAG Playground
+
+This workbench lives inside the existing PRO RAG dashboard. Start the usual Python
+backend and React frontend, then select **RAG Playground** in the sidebar. The direct
+link is <http://127.0.0.1:5173/#playground>; no separate app or server is required.
+
+## Try an experiment
+
+1. Start with the sample policy documents, paste your own text, or choose a ready
+   document from the active collection.
+2. Select a compact stage card. One inspector opens below the workflow, with
+   Output, Settings, and Input tabs; Embed and Retrieve also offer an Embedding map.
+3. Choose an algorithm from the compact controls or open Settings to drag an
+   algorithm card onto the matching pipeline stage. Change
+   chunk size, overlap, retrieval count, or semantic boundary threshold as needed.
+4. Choose **Run pipeline**, or **Run through** the selected stage. Results come from
+   the Python backend. Changing a setting marks earlier output as stale until rerun.
+5. Open transferred data to inspect the full payload, including vector values and
+   IDs linking chunks, retrieval candidates, and context. Export a JSON snapshot.
+
+The first visit automatically previews loading and recursive chunking. It does not
+load the embedding model or call NVIDIA. Completing a vectorized run starts flow
+playback along connections whose outputs exist. **Pause flow**, **Play flow**, and
+the speed selector control this visualization; animation speed is separate from
+measured server timings. Reduced-motion preferences disable moving particles.
+The pipeline supports zoom and horizontal scrolling on small screens.
+
+Stage cards show **Waiting**, **Running** with an elapsed timer, **Done** with the
+server's measured duration, or **Failed**. Only the active stage spins; later stages
+stay disabled until their inputs are ready. Completed stages can still be inspected
+while the rest of the run continues. Semantic chunking performs its sentence
+embeddings during Chunk, and that work is included in the Chunk duration.
+
+Chunk output initially shows three excerpts. Page through them or select a chunk
+to open its complete text, offsets, and parent context. The inspector can be closed
+and reopened. Library documents are chosen from the active collection; switch that
+collection in the Load stage's Settings tab.
+
+## Embedding map
+
+Run through **Embed** to create a map, or **Retrieve** to highlight retrieved
+candidates. A full run opens Retrieve's map when starting from an earlier stage.
+The map arrives immediately after Embed completes, before NVIDIA generation ends.
+Its timing row separates vector creation from PCA projection, while the stage card
+shows total Embed time (including index and map preparation).
+Every dot corresponds to an actual run chunk; the question uses a separate diamond.
+Selecting a dot or using the chunk dropdown shows its original text and full-vector
+cosine similarity. **View chunk** opens the complete passage.
+
+PCA is fitted on the chunk vectors, then the question is projected into the same
+basis. Changing only the question does not rearrange document points. The map uses
+up to three principal components; the 2D view pans and zooms, and the 3D view rotates
+with dragging or arrow keys. Reset restores the camera. Positions are approximate:
+retrieval continues to use the original vectors and algorithms, never chart distance.
+The displayed percentage describes retained chunk variance, not retrieval accuracy.
+
+Purple points are the first Top K candidates from the retrieval stage, before
+reranking. In hybrid mode those candidates reflect RRF and may differ from cosine
+order. With Embed-only runs no retrieval highlights are shown. The detail score is
+cosine similarity even when the retrieval channel is keyword or hybrid.
+
+Small or identical inputs can have fewer than two or three independent components;
+the map explains overlapping points and the dropdown still selects each chunk.
+TF–IDF questions with no vocabulary overlap have no query marker or cosine score.
+Explicit stub configurations are labeled. PCA uses the existing NumPy dependency;
+there is no additional model download or hosted visualization service.
+
+## Available stages
+
+| Stage | Options and visible results |
+| --- | --- |
+| Load | Keep sections and locations, or flatten text within each document. Inspect the actual loaded text. |
+| Chunk | Fixed character windows; LangChain recursive splitting; parent–child splitting with parent context expansion; or adjacent sentence embedding similarity. Inspect boundaries, offsets, IDs, overlap, parents, and semantic split decisions. |
+| Vectorize | Configured local MiniLM model, or normalized TF–IDF vectors using the experiment's vocabulary. Inspect dimensions, vector values, norms, and the FAISS index type. TF–IDF captures lexical overlap rather than semantic meaning. |
+| Retrieve | BM25, FAISS cosine similarity, or reciprocal rank fusion of both (k=60). Inspect each channel and fused candidate scores. |
+| Rerank | Keep incoming fusion order or apply the application's heuristic reranker. Compare incoming and outgoing order and inspect selected generation context. This is not a cross-encoder model. |
+| Generate | Full runs automatically use the configured NVIDIA provider, with citations and abstention. Inspect the exact system and evidence prompts. |
+
+Semantic chunking always uses the configured local sentence embedding model,
+including when TF–IDF is selected for the later vectorization stage. Similarity
+below the threshold starts a new group; the character limit also forces a split.
+Semantic grouping has no overlap. Parent–child uses parents up to four times the
+child size, capped at 4,000 characters, and deduplicates expanded parents in context.
+
+## Sources and comparison
+
+Library experiments use the document's saved extracted sections, including their
+existing chunk overlap. They do not reparse the original file. Experiments never
+write replacement chunks, vectors, evaluation results, or query history to the
+library. This makes the workbench safe to explore alongside normal document queries.
+
+**Pin run A** retains a result in the current page's memory. Change options and
+rerun with the same original source and question to compare configurations, chunk
+counts, selected evidence, and single-run server timings. Leaving the page clears
+this comparison. Open **Compare** to view both runs. Export results if you want to
+keep them; exports include full vectors and projection coordinates.
+
+These timings are not a repeated latency benchmark, and ranking scores are not
+accuracy measurements. Model initialization, corpus size, executed stages, and
+generation affect timings. Use the existing evaluation feature or reproducible
+retrieval report for labeled retrieval measurements.
+
+## Bounds and generation
+
+Runs use at most 40,000 source characters and 256 chunks. Library truncation is
+displayed. Semantic grouping accepts at most 400 sentences per section. Excessive
+chunk counts produce an error with guidance to increase size or reduce overlap.
+Only one playground experiment executes at a time per API process.
+
+Generation is included in full runs, without a checkbox. This sends the question
+and selected evidence to the configured NVIDIA endpoint. Runs through earlier stages
+remain local. Without a valid key, the Generate stage explains the error while
+earlier local outputs remain available. Provider errors preserve the earlier stage
+outputs. Missing embedding models report an error; they are never silently replaced
+with fake vectors. Explicit development stub configurations are labeled in the UI.
+
+The playground does not treat its heuristic ranking score as a probability that
+the answer exists. When passages are retrieved, the grounded generator receives
+them even if their score is low. This matters for questions such as a candidate's
+name: the resume can state the name without containing the words "candidate" or
+"name". Empty evidence still abstains, and citation validation remains enforced.
+
+Generate's Input and Output tabs identify whether a model request was attempted
+and whether a model response was received. Transferred data includes an `execution`
+trace distinguishing no evidence, conflicts, missing credentials, a model abstention,
+citation rejection, and a cited answer. A prepared `userPrompt` and `providerMode`
+alone are not proof that a model request happened. The legacy Ask/evaluation
+confidence policy is unchanged by this playground-specific behavior.
+
+The JSON endpoint is `POST /api/v1/playground/run`. The dashboard uses
+`POST /api/v1/playground/stream`, an NDJSON stream of actual stage start, progress,
+completion, and error events. Both run the same pipeline. `untilStage` is zero-based
+(0–5). API clients can explicitly set `generate: false` for retrieval-only runs;
+the dashboard presets keep it on. The schema is in <http://127.0.0.1:8787/docs>.
+
+If embeddings are complete but map coordinates are absent, an older backend is
+still running. Restart it and rerun Embed. The UI reports this mismatch explicitly.
+For automatic reload during development, use the repository-root command:
+
+~~~powershell
+.\.venv\Scripts\python.exe -m uvicorn server.app:create_app --factory --reload --host 127.0.0.1 --port 8787
+~~~

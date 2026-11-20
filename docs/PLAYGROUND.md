@@ -69,14 +69,15 @@ there is no additional model download or hosted visualization service.
 
 | Stage | Options and visible results |
 | --- | --- |
-| Load | Keep sections and locations, or flatten text within each document. Inspect the actual loaded text. |
+| Load | Keep sections or flatten text. Enable local RapidOCR for scanned PDF pages without a text layer. Inspect recognized text and OCR status. |
 | Chunk | Fixed character windows; LangChain recursive splitting; parent–child splitting with parent context expansion; or adjacent sentence embedding similarity. Inspect boundaries, offsets, IDs, overlap, parents, and semantic split decisions. |
-| Vectorize | Configured local MiniLM model, or normalized TF–IDF vectors using the experiment's vocabulary. Inspect dimensions, vector values, norms, and the FAISS index type. TF–IDF captures lexical overlap rather than semantic meaning. |
+| Embed | MiniLM L6, smaller MiniLM L3, E5 Small v2, or corpus TF-IDF. Neural options are bi-encoders. E5 uses query/passage prefixes. Inspect actual vectors, dimensions, timings and PCA. |
+| Query (optional) | Rewrite, decompose into up to three search questions, or generate a hypothetical HyDE passage. Adds one NVIDIA call plus search embedding time. Inspect generated search text. |
 | Retrieve | BM25, FAISS cosine similarity, or reciprocal rank fusion of both (k=60). Inspect each channel and fused candidate scores. |
-| Rerank | Keep incoming fusion order or apply the application's heuristic reranker. Compare incoming and outgoing order and inspect selected generation context. This is not a cross-encoder model. |
-| Generate | Full runs automatically use the configured NVIDIA provider, with citations and abstention. Inspect the exact system and evidence prompts. |
+| Rerank | Fusion order, heuristic, original-question bi-encoder cosine, or local MiniLM L2/L6 cross-encoder relevance logits. Inspect incoming/outgoing order and selected context. |
+| Generate | Select an NVIDIA Catalog model, edit answer instructions, and adjust temperature, Top P and output tokens. Required grounding and citation rules remain appended. Inspect exact prompts and request trace. |
 
-Semantic chunking always uses the configured local sentence embedding model,
+Semantic chunking uses the selected local sentence embedding model,
 including when TF–IDF is selected for the later vectorization stage. Similarity
 below the threshold starts a new group; the character limit also forces a split.
 Semantic grouping has no overlap. Parent–child uses parents up to four times the
@@ -85,7 +86,7 @@ child size, capped at 4,000 characters, and deduplicates expanded parents in con
 ## Sources and comparison
 
 Library experiments use the document's saved extracted sections, including their
-existing chunk overlap. They do not reparse the original file. Experiments never
+existing chunk overlap. With OCR enabled, Load reparses the original PDF and runs local recognition on pages without extracted text. A failed scanned PDF can also be selected for OCR. Experiments never
 write replacement chunks, vectors, evaluation results, or query history to the
 library. This makes the workbench safe to explore alongside normal document queries.
 
@@ -109,7 +110,8 @@ Only one playground experiment executes at a time per API process.
 
 Generation is included in full runs, without a checkbox. This sends the question
 and selected evidence to the configured NVIDIA endpoint. Runs through earlier stages
-remain local. Without a valid key, the Generate stage explains the error while
+remain local when query preparation is off. Query preparation makes one additional
+NVIDIA call when enabled. Without a valid key, the active NVIDIA stage explains the error while
 earlier local outputs remain available. Provider errors preserve the earlier stage
 outputs. Missing embedding models report an error; they are never silently replaced
 with fake vectors. Explicit development stub configurations are labeled in the UI.
@@ -130,7 +132,9 @@ confidence policy is unchanged by this playground-specific behavior.
 The JSON endpoint is `POST /api/v1/playground/run`. The dashboard uses
 `POST /api/v1/playground/stream`, an NDJSON stream of actual stage start, progress,
 completion, and error events. Both run the same pipeline. `untilStage` is zero-based
-(0–5). API clients can explicitly set `generate: false` for retrieval-only runs;
+(0–5), retaining the original six-stage numbering. `untilStageId` can instead target
+`load`, `chunk`, `embed`, `query`, `retrieve`, `rerank`, or `generate`; `query` requires
+query preparation to be enabled. API clients can explicitly set `generate: false` for retrieval-only runs;
 the dashboard presets keep it on. The schema is in <http://127.0.0.1:8787/docs>.
 
 If embeddings are complete but map coordinates are absent, an older backend is
@@ -140,3 +144,15 @@ For automatic reload during development, use the repository-root command:
 ~~~powershell
 .\.venv\Scripts\python.exe -m uvicorn server.app:create_app --factory --reload --host 127.0.0.1 --port 8787
 ~~~
+
+## Query preparation and model controls
+
+Use the optional query selector above the pipeline to insert a Query card between Embed and Retrieve. Turning it off restores six stages. The original question is retained for reranking and answering. Decomposition retrieves for each question and combines rankings with RRF; HyDE uses its hypothetical passage vector for semantic search and the original question for BM25. Generated query text never becomes answer evidence.
+
+Retrieve offers a search-query selector when query preparation is enabled. Each diamond and cosine score belongs to that actual search vector, projected into the original chunk PCA basis. Purple retrieval highlights reflect the fused results across all queries.
+
+Model choices are limited to known IDs; keys and endpoint URLs stay on the server. Hosted model availability, trial credits and rate limits depend on the NVIDIA account. The current selected hosted endpoints do not expose a documented token Top K control, so it is disabled and rejected by the API instead of silently ignored. Retrieval Top K still selects context passages. Prompt editing changes additional answer instructions; evidence-only JSON and citation validation remain mandatory.
+
+New embedding and cross-encoder weights download on first use to `data/models`, then run locally on CPU. One extra embedding model and one cross-encoder remain cached in memory. Changing the model always rebuilds the experiment vectors and FAISS index. For an embedding comparison, run through Rerank, pin A, change the embedding model, rerun through Rerank and open Compare. Keep chunk settings fixed and inspect timings, dimensions, evidence and order. Cold model load and download time are included; these are single runs, not accuracy benchmarks.
+
+Install portable OCR dependencies using `.\.venv\Scripts\python.exe -m pip install -e ".[ocr]"`. RapidOCR uses ONNX Runtime on CPU; no separate Tesseract installation is required. Recognition defaults support English; results depend on scan quality. Large or slow PDFs still obey the parser timeout.

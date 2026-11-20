@@ -346,3 +346,24 @@
   .lab-node:hover, .lab-chunk-preview:hover, .lab-chunk-branch button:hover { transform: none; }
   .lab-flowing .lab-connector-ready .lab-packet { display: none; }
 }
+
+.lab-advanced-settings { display: grid; gap: 16px; max-width: 900px; margin: 20px 0; }
+.lab-settings-view > fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.lab-option-field, .lab-prompt-editor { display: grid; gap: 8px; font-size: 14px; }
+.lab-option-field select, .lab-option-field input, .lab-prompt-editor textarea { width: 100%; min-width: 0; }
+.lab-prompt-editor textarea { resize: vertical; line-height: 1.6; }
+.lab-sampling-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 26px; }
+.lab-sampling { display: grid; gap: 12px; font-size: 14px; }
+.lab-sampling > span { display: flex; justify-content: space-between; gap: 8px; }
+.lab-sampling output { color: var(--purple); font-variant-numeric: tabular-nums; }
+.lab-sampling input { width: 100%; accent-color: var(--purple); }
+.lab-ocr-toggle { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.lab-ocr-toggle input { width: 17px; height: 17px; accent-color: var(--purple); }
+.lab-search-map-select { max-width: 650px; display: grid; gap: 8px; margin: 0 0 20px; font-size: 14px; }
+.lab-query-output { max-width: 900px; }
+@media(max-width: 650px) { .lab-sampling-grid { grid-template-columns: 1fr; } .lab-playback-controls { flex-wrap: wrap; justify-content: flex-end; } }
+
+.lab-playback-controls select[aria-label="Optional query stage"] { width: 210px; border-left: 0; border-right: 1px solid var(--line); border-radius: 9px 0 0 9px; }
+.lab-node-method { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@container rag-playground (max-width: 650px) { .lab-flow-header { flex-wrap: wrap; } }
+@container rag-playground (max-width: 480px) { .lab-flow-header { flex-direction: column; align-items: stretch; } .lab-flow-header > div:first-child { flex-direction: row; align-items: center; } .lab-playback-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; } .lab-playback-controls > label:first-child { grid-column: 1 / -1; } .lab-playback-controls select[aria-label="Optional query stage"] { width: 100%; border: 0; border-bottom: 1px solid var(--line); border-radius: 9px 9px 0 0; } }

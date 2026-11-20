@@ -168,11 +168,15 @@ def create_app(config=None, **options):
 
     @app.get(PREFIX + "/health")
     def health():
-        return {"status": "ok", "version": "1", "time": timestamp(), "indexStatus": "ready", "playgroundVersion": 2}
+        return {"status": "ok", "version": "1", "time": timestamp(), "indexStatus": "ready", "playgroundVersion": 3}
 
     @app.get(PREFIX + "/config/status")
     def config_status():
         return service.config_status()
+
+    @app.get(PREFIX + "/playground/options")
+    async def playground_options():
+        return service.playground.models.options()
 
     @app.post(PREFIX + "/playground/run")
     async def playground_run(request: PlaygroundRequest):

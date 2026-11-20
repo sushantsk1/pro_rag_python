@@ -96,7 +96,7 @@ export default function EmbeddingMap({ embedding, entry, now, chunks, retrieval,
   return <div className={'lab-map ' + (flowing ? 'lab-map-flowing' : '')}>
     <div className="lab-map-toolbar">
       <span>{embedding.mode === 'tfidf' ? 'TF–IDF' : embedding.model.split('/').pop()} · {embedding.dimensions} dimensions · PCA projection</span>
-      <div className="lab-map-legend"><span><i />Chunks</span><span><i className="retrieved" />{retrieval ? 'Retrieved' : 'No retrieval yet'}</span><span><i className="query" />Question</span></div>
+      <div className="lab-map-legend"><span><i />Chunks</span><span><i className="retrieved" />{retrieval ? 'Retrieved' : 'No retrieval yet'}</span><span><i className="query" />{embedding.searchLabel || 'Question'}</span></div>
       <div className="lab-mode" role="group" aria-label="Map dimensions">{['2d', '3d'].map(value => <button type="button" key={value} aria-pressed={mode === value} onClick={() => { setMode(value); reset(); }}>{value.toUpperCase()}</button>)}</div>
     </div>
     {embedding.embeddingDurationMs != null && <p className="lab-embedding-timings">Embeddings done · {formatDuration(embedding.embeddingDurationMs)}<span>Map projection · {formatDuration(embedding.projectionDurationMs)}</span></p>}
@@ -129,7 +129,7 @@ export default function EmbeddingMap({ embedding, entry, now, chunks, retrieval,
             <title>{point.chunkId + ' · ' + byId.get(point.chunkId)?.documentName + ' · cosine ' + score(point.cosineSimilarity)}</title>
             <circle className="lab-point-target" r={12} /><circle className="lab-point-ring" r={10} /><circle className="lab-point-center" r={active?.chunkId === point.chunkId ? 5.5 : 4.5} />
           </g>)}
-          {query.hasSignal && <g className="lab-query-point" transform={'translate(' + question.x + ' ' + question.y + ')'}><path d="M0 -7L7 0L0 7L-7 0Z" /><text x={-12} y={-13} textAnchor="end">Your question</text></g>}
+          {query.hasSignal && <g className="lab-query-point" transform={'translate(' + question.x + ' ' + question.y + ')'}><path d="M0 -7L7 0L0 7L-7 0Z" /><text x={-12} y={-13} textAnchor="end">{embedding.searchLabel || 'Your question'}</text></g>}
         </g>
         {displayPoint && <g className="lab-map-tooltip" pointerEvents="none" transform={'translate(' + Math.max(BOX.left + 10, Math.min(BOX.left + BOX.width - 95, displayPoint.x + 12)) + ' ' + Math.max(BOX.top + 18, Math.min(BOX.top + BOX.height - 10, displayPoint.y - 12)) + ')'}><rect x={-7} y={-17} width={79} height={27} rx={5} /><text>{displayPoint.chunkId}</text></g>}
       </svg>

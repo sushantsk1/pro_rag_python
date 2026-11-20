@@ -3,6 +3,7 @@ import json
 import re
 import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 from langchain_core.documents import Document
@@ -87,22 +88,29 @@ def markdown_parts(text: str) -> list[dict]:
     return parts
 
 
+@lru_cache(maxsize=1)
+def _ocr_engine():
+    from rapidocr import RapidOCR
+
+    return RapidOCR()
+
+
 def _ocr_page(file_path: Path, page_index: int) -> str:
     try:
         import pypdfium2
-        import pytesseract
 
         with pypdfium2.PdfDocument(str(file_path)) as pdf:
             bitmap = pdf[page_index].render(scale=2)
             try:
-                return pytesseract.image_to_string(bitmap.to_pil()).strip()
+                result = _ocr_engine()(bitmap.to_pil())
+                return "\n".join(result.txts or []).strip()
             finally:
                 bitmap.close()
     except Exception as cause:
         raise RagError(
             503,
             "OCR_UNAVAILABLE",
-            "Local OCR unavailable. Install the ocr extra, Tesseract, and its language assets.",
+            "Local OCR unavailable. Install the ocr extra (RapidOCR, PDFium, and Pillow).",
         ) from cause
 
 

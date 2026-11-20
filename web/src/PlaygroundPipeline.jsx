@@ -18,19 +18,19 @@ export default function PlaygroundPipeline({ stages, settings, result, selected,
     if (bounds.right > view.right) viewport.current.scrollLeft += bounds.right - view.right + 18;
     else if (bounds.left < view.left) viewport.current.scrollLeft -= view.left - bounds.left + 18;
   }, [selected, zoom, width]);
-  const sceneWidth = Math.max(880, width);
+  const sceneWidth = Math.max(stages.length * 190 + 9, width);
   const branchChunks = selected === 1 ? chunks.slice(0, 3) : [];
   const sceneHeight = branchChunks.length ? 200 : 150;
   return <div className={'lab-stage-canvas' + (flowing && !dirty ? ' lab-flowing' : '')} style={{ '--flow-duration': (2.2 / speed) + 's' }}>
     <div className="lab-stage-scroll" ref={viewport}>
       <div className="lab-stage-extent" style={{ width: sceneWidth * zoom, height: sceneHeight * zoom }}>
-        <ol className="lab-flow" aria-label="RAG pipeline stages" style={{ width: sceneWidth, transform: 'scale(' + zoom + ')' }}>
+        <ol className="lab-flow" aria-label="RAG pipeline stages" style={{ width: sceneWidth, gridTemplateColumns: 'repeat(' + stages.length + ', minmax(0, 1fr))', transform: 'scale(' + zoom + ')' }}>
           {stages.map((stage, index) => {
-            const Icon = stage.icon, entry = result?.stages[index];
+            const Icon = stage.icon, entry = result?.stages.find(item => item.id === stage.id);
             const completed = !dirty && entry?.status === 'complete';
             const running = entry?.status === 'running' && !dirty;
             const waiting = busy && !running && !entry?.output;
-            const hasNext = !dirty && result?.stages[index + 1]?.output;
+            const hasNext = !dirty && result?.stages.find(item => item.id === stages[index + 1]?.id)?.output;
             const method = stage.setting ? stage.methods.find(([key]) => key === settings[stage.setting])?.[1] : 'NVIDIA';
             const time = running ? 'Running' : formatDuration(entry?.durationMs);
             return <li key={stage.id}>

@@ -132,6 +132,6 @@ Use one API worker on loopback. This application has no multi-user authenticatio
 
 Supported formats: PDF, DOCX, PPTX, XLSX, CSV, TXT, Markdown, HTML. Available page, slide, heading, sheet, and row locations are retained. Complex layouts, handwriting, protected files, and embedded images may need preprocessing.
 
-Optional scanned-PDF OCR requires pip install -e ".[ocr]", a separate Tesseract installation, and language assets. Missing dependencies produce an actionable error.
+Optional scanned-PDF OCR requires `pip install -e ".[ocr]"`. RapidOCR and ONNX Runtime run locally on CPU without a separate Tesseract installation. Missing dependencies produce an actionable error.
 
 MiniLM is intended for short English passages. Character-based chunking does not guarantee every chunk fits the model's token limit. Reranking/conflict detection are heuristics; valid citations do not certify factual accuracy. NVIDIA availability, quota, and model access depend on your account.

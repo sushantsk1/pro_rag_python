@@ -15,8 +15,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from rank_bm25 import BM25Okapi
 
 from .errors import RagError
+from .playground_models import NVIDIA_MODELS, ExperimentModels
 from .playground_projection import project_embeddings
-from .provider import SYSTEM, source_context
+from .playground_provider import ExperimentProvider, system_prompt
+from .provider import source_context
 from .retrieval import rerank, tokenize
 from .store import timestamp
 
@@ -66,11 +68,22 @@ class PlaygroundRequest(BaseModel):
     overlap: int = Field(default=80, ge=0, le=200, strict=True)
     semanticThreshold: float = Field(default=0.55, ge=0, le=1, allow_inf_nan=False)
     embedding: Literal["local", "tfidf"] = "local"
+    embeddingModel: Literal["configured", "minilm-l6", "minilm-l3", "e5-small"] = "configured"
+    ocr: bool = Field(default=False, strict=True)
+    queryPreparation: Literal["none", "rewrite", "decompose", "hyde"] = "none"
     retrieval: Literal["keyword", "semantic", "hybrid"] = "hybrid"
-    ranking: Literal["none", "heuristic"] = "heuristic"
+    ranking: Literal["none", "heuristic", "bi-encoder", "cross-encoder"] = "heuristic"
+    crossEncoderModel: Literal["minilm-l2", "minilm-l6"] = "minilm-l2"
+    generationModel: str | None = Field(default=None, max_length=160)
+    prompt: str = Field(default="", max_length=6000)
+    temperature: float = Field(default=0.2, ge=0, le=1, allow_inf_nan=False)
+    topP: float = Field(default=1.0, gt=0, le=1, allow_inf_nan=False)
+    generationTopK: int | None = Field(default=None, ge=1, le=100, strict=True)
+    maxTokens: int = Field(default=600, ge=64, le=2048, strict=True)
     topK: int = Field(default=6, ge=1, le=10, strict=True)
     generate: bool = Field(default=True, strict=True)
     untilStage: int = Field(default=5, ge=0, le=5, strict=True)
+    untilStageId: Literal["load", "chunk", "embed", "query", "retrieve", "rerank", "generate"] | None = None
 
     @field_validator("question")
     @classmethod
@@ -81,6 +94,12 @@ class PlaygroundRequest(BaseModel):
 
     @model_validator(mode="after")
     def check_settings(self):
+        if self.generationTopK is not None:
+            raise ValueError("Token Top K is not exposed by the supported hosted endpoints. Use Top P instead.")
+        if self.untilStageId == "query" and self.queryPreparation == "none":
+            raise ValueError("Enable query preparation before running that stage.")
+        if self.ocr and self.source != "document":
+            raise ValueError("OCR requires a library PDF document.")
         if self.overlap >= self.chunkSize:
             raise ValueError("Overlap must be smaller than the chunk size.")
         if self.chunking == "semantic" and self.overlap:
@@ -132,6 +151,8 @@ class PlaygroundCancelled(Exception):
 class Playground:
     def __init__(self, service):
         self.service = service
+        self.models = ExperimentModels(service)
+        self.provider = ExperimentProvider(service.config)
         self.gate = threading.BoundedSemaphore(1)
 
     def load(self, request):
@@ -151,7 +172,7 @@ class Playground:
                 doc = self.service.get_document(request.documentId)
                 if doc["collectionId"] != request.collectionId:
                     raise RagError(404, "NOT_FOUND", "Document not found in this collection.")
-                if doc["status"] != "ready":
+                if doc["status"] != "ready" and not (request.ocr and doc["status"] == "failed"):
                     raise RagError(409, "DOCUMENT_NOT_READY", "Wait for document processing to finish.")
                 chunks = sorted(
                     (
@@ -161,6 +182,12 @@ class Playground:
                     ),
                     key=lambda c: c["index"],
                 )
+                stored = self.service.store.get("document", doc["id"])
+            if request.ocr:
+                if stored["format"] != "pdf":
+                    raise RagError(422, "OCR_REQUIRES_PDF", "Choose a PDF document to use OCR.")
+                parsed = self.service.parse(stored["filePath"], "pdf", ocr=True)
+                chunks = parsed["parts"]
             documents = [
                 {
                     "id": doc["id"],
@@ -172,6 +199,9 @@ class Playground:
                 "Uses existing extracted library sections, including their original overlap. "
                 "It does not reparse or replace the uploaded file."
             )
+            if request.ocr:
+                note = ("Re-extracted the original PDF with OCR on pages without text. "
+                        "Library chunks and indexes stay unchanged. " + " ".join(parsed.get("warnings", [])))
         source_fingerprint = hashlib.sha256(
             repr([(d["id"], [s["text"] for s in d["sections"]]) for d in documents]).encode()
         ).hexdigest()
@@ -205,6 +235,8 @@ class Playground:
         if not loaded:
             raise RagError(422, "NO_TEXT", "No extracted text is available for this experiment.")
         return loaded, {
+            "ocrRequested": request.ocr,
+            "ocrVerified": bool(request.ocr and parsed.get("ocrVerified")),
             "note": note,
             "fingerprint": source_fingerprint,
             "truncated": original_size > MAX_CHARACTERS,
@@ -243,7 +275,7 @@ class Playground:
                                 422, "PLAYGROUND_LIMIT", "Use fewer than 400 sentences for semantic grouping."
                             )
                         vectors = (
-                            self.service.embedder.embed_documents([span[0] for span in spans])
+                            self.models.embedder(request.embeddingModel).embed_documents([span[0] for span in spans])
                             if spans
                             else []
                         )
@@ -313,10 +345,15 @@ class Playground:
             self.gate.release()
 
     def _run(self, request, emit=None, cancelled=None):
+        if request.generationModel and request.generationModel not in {*NVIDIA_MODELS, self.service.config.nvidia_model}:
+            raise RagError(422, "MODEL_NOT_ALLOWED", "Choose a model from the experiment model list.")
         started = perf_counter()
+        stage_names = ["load", "chunk", "embed", "retrieve", "rerank", "generate"]
+        if request.queryPreparation != "none":
+            stage_names.insert(3, "query")
         stages = [
             {"id": name, "status": "not_run", "durationMs": None, "input": None, "output": None}
-            for name in ("load", "chunk", "embed", "retrieve", "rerank", "generate")
+            for name in stage_names
         ]
         chunks, sources, vectors, parents = [], [], [], []
         config = request.model_dump()
@@ -333,6 +370,7 @@ class Playground:
             emit({"type": "run_started", "run": result})
 
         def start_stage(index, message):
+            index = actual_index(index)
             if cancelled is not None and cancelled.is_set():
                 raise PlaygroundCancelled()
             stages[index].update(status="running", startedAtMs=round(time() * 1000), message=message)
@@ -341,6 +379,7 @@ class Playground:
             return perf_counter()
 
         def progress(index, message):
+            index = actual_index(index)
             stages[index]["message"] = message
             if emit:
                 emit({"type": "stage_progress", "index": index, "message": message})
@@ -357,6 +396,7 @@ class Playground:
             return result
 
         def stage(index, clock, input_value, output_value, status="complete"):
+            index = actual_index(index)
             stages[index].update(
                 status=status,
                 durationMs=round((perf_counter() - clock) * 1000, 2),
@@ -365,6 +405,14 @@ class Playground:
             )
             if emit:
                 emit({"type": "stage_completed", "index": index, "stage": stages[index]})
+
+        def actual_index(index):
+            name = index if isinstance(index, str) else ("load", "chunk", "embed", "retrieve", "rerank", "generate")[index]
+            return stage_names.index(name)
+
+        def stopped(index):
+            target = request.untilStageId or ("load", "chunk", "embed", "retrieve", "rerank", "generate")[request.untilStage]
+            return stage_names[actual_index(index)] == target
 
         clock = start_stage(0, "Loading source text")
         documents, source_info = self.load(request)
@@ -375,7 +423,7 @@ class Playground:
             {"source": request.source, "documentId": request.documentId},
             {"documents": documents, **source_info},
         )
-        if request.untilStage == 0:
+        if stopped(0):
             return finish()
 
         clock = start_stage(
@@ -400,12 +448,12 @@ class Playground:
                 "chunks": chunks,
                 "parents": parents,
                 "boundaries": boundaries,
-                "semanticBoundaryModel": self.service.embedder.identity
+                "semanticBoundaryModel": self.models.embedder(request.embeddingModel).identity
                 if request.chunking == "semantic"
                 else None,
             },
         )
-        if request.untilStage == 1:
+        if stopped(1):
             return finish()
 
         clock = start_stage(
@@ -420,11 +468,11 @@ class Playground:
             embedding_mode = "tfidf"
         else:
             vectors = np.asarray(
-                self.service.embedder.embed_documents([c["text"] for c in chunks]), dtype=np.float32
+                self.models.embedder(request.embeddingModel).embed_documents([c["text"] for c in chunks]), dtype=np.float32
             )
-            query_vector = np.asarray(self.service.embedder.embed_query(request.question), dtype=np.float32)
+            query_vector = np.asarray(self.models.embedder(request.embeddingModel).embed_query(request.question), dtype=np.float32)
             vocabulary = None
-            model = self.service.config.embedding_model
+            model = self.models.embedder(request.embeddingModel).identity
             embedding_mode = self.service.config.embedding_mode
         embedding_duration = round((perf_counter() - clock) * 1000, 2)
         progress(2, "Building the vector index and embedding map")
@@ -453,17 +501,42 @@ class Playground:
                 "projectionDurationMs": projection_duration,
             },
         )
-        if request.untilStage == 2:
+        if stopped(2):
             return finish()
+
+        queries = [request.question]
+        search_vectors = [query_vector]
+        search_maps = []
+        if request.queryPreparation != "none":
+            clock = start_stage("query", "Preparing search text with NVIDIA")
+            prepared = self.provider.prepare(request)
+            queries = prepared["queries"]
+            search_vectors = []
+            for query in queries:
+                if request.embedding == "tfidf":
+                    vector = tfidf_vectors([c["text"] for c in chunks], query)[1]
+                elif request.queryPreparation == "hyde":
+                    vector = np.asarray(self.models.embedder(request.embeddingModel).embed_documents([query])[0], dtype=np.float32)
+                else:
+                    vector = np.asarray(self.models.embedder(request.embeddingModel).embed_query(query), dtype=np.float32)
+                search_vectors.append(vector)
+                search_maps.append({"text": query, "projection": project_embeddings(chunks, vectors, vector)})
+            prepared["searches"] = search_maps
+            stage("query", clock, {"question": request.question}, prepared)
+            if stopped("query"):
+                return finish()
 
         clock = start_stage(3, "Searching for relevant chunks")
         limit = max(request.topK * 4, 24)
-        lexical, semantic = [], []
-        if request.retrieval in ("keyword", "hybrid"):
-            words = [tokenize(c["text"]) for c in chunks]
-            if any(words):
-                scores = BM25Okapi(words).get_scores(tokenize(request.question))
-                terms = set(tokenize(request.question))
+        all_hits = []
+        words = [tokenize(c["text"]) for c in chunks]
+        bm25 = BM25Okapi(words) if any(words) else None
+        for query, search_vector in zip(queries, search_vectors, strict=True):
+            lexical, semantic = [], []
+            lexical_query = request.question if request.queryPreparation == "hyde" else query
+            if request.retrieval in ("keyword", "hybrid") and bm25:
+                scores = bm25.get_scores(tokenize(lexical_query))
+                terms = set(tokenize(lexical_query))
                 lexical = sorted(
                     [
                         (i, max(0.0, float(scores[i])))
@@ -473,17 +546,28 @@ class Playground:
                     key=lambda pair: pair[1],
                     reverse=True,
                 )[:limit]
-        if request.retrieval in ("semantic", "hybrid") and np.linalg.norm(query_vector):
-            distances, positions = index.search(
-                np.asarray([query_vector], dtype=np.float32), min(limit, len(chunks))
-            )
-            semantic = [
-                (int(i), float(score))
-                for i, score in zip(positions[0], distances[0], strict=True)
-                if i >= 0 and math.isfinite(float(score)) and score > 0
-            ]
+            if request.retrieval in ("semantic", "hybrid") and np.linalg.norm(search_vector):
+                distances, positions = index.search(
+                    np.asarray([search_vector], dtype=np.float32), min(limit, len(chunks))
+                )
+                semantic = [
+                    (int(i), float(score))
+                    for i, score in zip(positions[0], distances[0], strict=True)
+                    if i >= 0 and math.isfinite(float(score)) and score > 0
+                ]
+            all_hits.extend([("lexical", lexical), ("semantic", semantic)])
+        # Aggregate best raw scores for display; RRF uses every per-query ranking.
+        def best_hits(kind):
+            best = {}
+            for channel, hits in all_hits:
+                if channel == kind:
+                    for position, score in hits:
+                        best[position] = max(best.get(position, -math.inf), score)
+            return sorted(best.items(), key=lambda pair: pair[1], reverse=True)
+
+        lexical, semantic = best_hits("lexical"), best_hits("semantic")
         fused = {}
-        for kind, hits in (("lexical", lexical), ("semantic", semantic)):
+        for kind, hits in all_hits:
             for rank, (i, score) in enumerate(hits, 1):
                 item = fused.setdefault(
                     i,
@@ -492,7 +576,7 @@ class Playground:
                         "scores": {"lexical": None, "semantic": None, "fusion": 0.0, "rerank": None},
                     },
                 )
-                item["scores"][kind] = score
+                item["scores"][kind] = max(item["scores"][kind] or 0, score)
                 item["scores"]["fusion"] += 1 / (60 + rank)
         candidates = sorted(fused.values(), key=lambda c: c["scores"]["fusion"], reverse=True)[
             : max(3 * request.topK, 18)
@@ -502,13 +586,15 @@ class Playground:
             clock,
             {"question": request.question, "method": request.retrieval, "topK": request.topK},
             {
+                "searches": search_maps,
+                "queries": queries,
                 "candidates": candidates,
                 "lexicalHits": [{"chunkId": chunks[i]["id"], "score": s} for i, s in lexical],
                 "semanticHits": [{"chunkId": chunks[i]["id"], "score": s} for i, s in semantic],
                 "fusion": "Reciprocal rank fusion (k=60)",
             },
         )
-        if request.untilStage == 3:
+        if stopped(3):
             return finish()
 
         clock = start_stage(4, "Ranking candidates and selecting context")
@@ -522,7 +608,22 @@ class Playground:
             }
             for candidate in candidates
         ]
-        if request.ranking == "heuristic":
+        if request.ranking == "cross-encoder":
+            scores = self.models.cross_scores(request.crossEncoderModel, request.question, [c["text"] for c in ranked])
+            for candidate, score in zip(ranked, scores, strict=True):
+                candidate["scores"]["rerank"] = score
+        elif request.ranking == "bi-encoder":
+            if request.embedding == "tfidf" and ranked:
+                encoder = self.models.embedder(request.embeddingModel)
+                rank_vectors = np.asarray(encoder.embed_documents([c["text"] for c in ranked]), dtype=np.float32)
+                rank_query = np.asarray(encoder.embed_query(request.question), dtype=np.float32)
+            else:
+                by_id = {chunk["id"]: i for i, chunk in enumerate(chunks)}
+                rank_vectors = [vectors[by_id[c["id"]]] for c in ranked]
+                rank_query = query_vector
+            for candidate, vector in zip(ranked, rank_vectors, strict=True):
+                candidate["scores"]["rerank"] = float(vector @ rank_query)
+        if request.ranking != "none":
             ranked.sort(key=lambda c: c["scores"]["rerank"], reverse=True)
         selected = ranked[: request.topK]
         by_parent = {p["id"]: p for p in parents}
@@ -558,7 +659,7 @@ class Playground:
                 else "Selected chunk text becomes answer context.",
             },
         )
-        if request.untilStage == 4:
+        if stopped(4):
             return finish()
 
         clock = start_stage(
@@ -569,7 +670,7 @@ class Playground:
         )
         context = source_context(sources)
         generation = {
-            "systemPrompt": SYSTEM,
+            "systemPrompt": system_prompt(request),
             "userPrompt": f"Question: {request.question}\n\nEvidence:\n{context}",
             "answer": None,
             "citations": [],
@@ -591,7 +692,14 @@ class Playground:
                 # questions with little literal overlap ("candidate name", etc.).
                 execution = generation["execution"]
                 execution.update(generatorInvoked=True, decision="not_started")
-                generated = self.service.generator.generate(request.question, sources, trace=execution)
+                # Explicit controls must be sent even when equal to UI defaults;
+                # an SDK's own sampling defaults can otherwise differ.
+                customized = bool({"generationModel", "prompt", "temperature", "topP", "maxTokens"}
+                                  & request.model_fields_set)
+                if customized and self.service.config.model_mode != "stub":
+                    generated = self.provider.generate(request, sources, execution)
+                else:
+                    generated = self.service.generator.generate(request.question, sources, trace=execution)
                 generation.update(generated)
                 status = "complete"
             except RagError as error:
